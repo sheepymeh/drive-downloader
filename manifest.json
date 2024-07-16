@@ -1,0 +1,25 @@
+{
+	"manifest_version": 3,
+	"name": "Google Drive Downloader",
+	"description": "Downloads view-only files from Google Drive",
+	"version": "1.0",
+	"action": {
+		"default_popup": "index.html",
+		"default_icon": "assets/icon.png"
+	},
+	"permissions": [
+		"tabs",
+		"storage",
+		"scripting",
+		"downloads",
+		"webRequest",
+		"webNavigation"
+	],
+	"background": {
+		"service_worker": "service-worker.js"
+	},
+	"host_permissions": [
+		"https://drive.google.com/*",
+		"https://docs.google.com/*"
+	]
+}

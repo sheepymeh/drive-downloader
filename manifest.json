@@ -2,7 +2,7 @@
 	"manifest_version": 3,
 	"name": "Google Drive Downloader",
 	"description": "Downloads view-only files from Google Drive",
-	"version": "1.0",
+	"version": "0.1.0",
 	"action": {
 		"default_popup": "index.html",
 		"default_icon": "assets/icon.png"
@@ -12,8 +12,7 @@
 		"storage",
 		"scripting",
 		"downloads",
-		"webRequest",
-		"webNavigation"
+		"webRequest"
 	],
 	"background": {
 		"service_worker": "service-worker.js"

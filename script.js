@@ -1,9 +1,10 @@
 const browser = chrome;
 const maxSideLength = 600;
 
+const unsupportedContainer = document.querySelector('#unsupported-container');
 const errorContainer = document.querySelector('#error-container');
 
-const downloadButton = document.querySelector('button');
+const downloadButton = document.querySelector('#download-button');
 const downloadFname = document.querySelector('#fname');
 
 const statusContainer = document.querySelector('#status-container');
@@ -16,12 +17,7 @@ async function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function setVisible(element, isVisible) {
-	element.style.display = isVisible ? 'block' : 'none';
-}
-
 function setStatus(text, value) {
-	setVisible(statusContainer, true);
 	statusText.innerText = text;
 	progressBar.value = value;
 }
@@ -92,7 +88,7 @@ async function refreshViewID(docID) {
 			await sleep(250);
 		}
 
-		if (!viewID) {
+		if (!viewID || viewID === oldID) {
 			throw new Error('Failed to refresh viewID for this document.');
 		}
 
@@ -140,105 +136,110 @@ function collectWordLeaves(node, leaves = []) {
 
 document.addEventListener('DOMContentLoaded', async () => {
 	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (tabs[0].url.includes('drive.google.com') || tabs[0].url.includes('docs.google.com')) {
-		downloadFname.innerText = await getFname(tabs[0]);
+	const url = tabs[0].url;
+	if (!url.includes('drive.google.com') && !url.includes('docs.google.com')) {
+		document.body.className = 'unsupported';
 	}
 	else {
-		downloadButton.disabled = true;
-		errorContainer.style.display = 'block';
+		downloadFname.innerText = await getFname(tabs[0]);
+		document.body.className = 'ready';
 	}
 });
 
 downloadButton.addEventListener('click', async () => {
-	setVisible(downloadButton, false);
-	setStatus('Getting document data...', 0);
+	try {
+		document.body.className = 'downloading';
+		setStatus('Getting document data...', 0);
 
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	const url = new URL(tabs[0].url);
-	const docID = url.pathname.split('/')[3];
-	const authuser = url.searchParams.get('authuser') || '0';
+		const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+		const url = new URL(tabs[0].url);
+		const docID = url.pathname.split('/')[3];
+		const authuser = url.searchParams.get('authuser') || '0';
 
-	let viewID = (await browser.storage.session.get(docID))[docID];
-	if (!viewID) viewID = await refreshViewID(docID);
+		let viewID = (await browser.storage.session.get(docID))[docID];
+		if (!viewID) viewID = await refreshViewID(docID);
 
-	const pdf = await PDFLib.PDFDocument.create();
-	const font = await pdf.embedFont(PDFLib.StandardFonts.Helvetica);
+		const pdf = await PDFLib.PDFDocument.create();
+		const font = await pdf.embedFont(PDFLib.StandardFonts.Helvetica);
 
-	const metadata = await getJSON('meta', new URLSearchParams({
-		id: viewID,
-		authuser,
-	}), docID);
-	progressBar.max = metadata.pages + 1;
-
-	for (let i = 0; i < metadata.pages; i++) {
-		setStatus(`Downloading page ${i + 1} of ${metadata.pages}`, i + 1);
-
-		const params = new URLSearchParams({
+		const metadata = await getJSON('meta', new URLSearchParams({
 			id: viewID,
 			authuser,
-			page: i,
-			webp: false,
-			w: metadata.maxPageWidth,
-		});
+		}), docID);
+		progressBar.max = metadata.pages + 1;
 
-		const pressPage = await getJSON('presspage', params, docID);
-		const [_, pageWidth, pageHeight, boxes] = pressPage;
+		for (let i = 0; i < metadata.pages; i++) {
+			setStatus(`Downloading page ${i + 1} of ${metadata.pages}...`, i + 1);
 
-		const imgReq = await fetchWithRetry(`https://drive.google.com/viewerng/img?${params.toString()}`);
-		const imgBytes = await imgReq.arrayBuffer();
-		const img = await pdf.embedPng(imgBytes);
-
-		const ratio = pageWidth / pageHeight;
-		const imgWidth = maxSideLength * Math.min(1, ratio);
-		const imgHeight = maxSideLength / Math.max(1, ratio);
-		const scale = imgWidth / pageWidth;
-
-		const page = pdf.addPage([imgWidth, imgHeight]);
-		page.drawImage(img, {
-			x: 0,
-			y: 0,
-			width: imgWidth,
-			height: imgHeight,
-		});
-
-		if (boxes) {
-			const wordLeaves = collectWordLeaves(boxes).sort((left, right) => {
-				const [leftY, leftX] = left[0];
-				const [rightY, rightX] = right[0];
-				return leftY - rightY || leftX - rightX;
+			const params = new URLSearchParams({
+				id: viewID,
+				authuser,
+				page: i,
+				webp: false,
+				w: metadata.maxPageWidth,
 			});
 
-			for (const [box, text] of wordLeaves) {
-				const [y, x, h, w] = box.map(value => value * scale);
+			const pressPage = await getJSON('presspage', params, docID);
+			const [_, pageWidth, pageHeight, boxes] = pressPage;
 
-				let size = h / font.heightAtSize(h);
-				try {
-					const textWidth = font.widthOfTextAtSize(text, size);
-					size *= w / textWidth;
+			const imgReq = await fetchWithRetry(`https://drive.google.com/viewerng/img?${params.toString()}`);
+			const imgBytes = await imgReq.arrayBuffer();
+			const img = await pdf.embedPng(imgBytes);
 
-					page.drawText(text, {
-						x, y: imgHeight - y - size, size, font,
-						color: PDFLib.rgb(1, 1, 1),
-						opacity: 0,
-					});
-				} catch (e) {
-					console.warn(`Skipping text that can't be encoded: "${text}"`, e);
-					continue;
+			const ratio = pageWidth / pageHeight;
+			const imgWidth = maxSideLength * Math.min(1, ratio);
+			const imgHeight = maxSideLength / Math.max(1, ratio);
+			const scale = imgWidth / pageWidth;
+
+			const page = pdf.addPage([imgWidth, imgHeight]);
+			page.drawImage(img, {
+				x: 0,
+				y: 0,
+				width: imgWidth,
+				height: imgHeight,
+			});
+
+			if (boxes) {
+				const wordLeaves = collectWordLeaves(boxes).sort((left, right) => {
+					const [leftY, leftX] = left[0];
+					const [rightY, rightX] = right[0];
+					return leftY - rightY || leftX - rightX;
+				});
+
+				for (const [box, text] of wordLeaves) {
+					const [y, x, h, w] = box.map(value => value * scale);
+
+					let size = h / font.heightAtSize(h);
+					try {
+						const textWidth = font.widthOfTextAtSize(text, size);
+						size *= w / textWidth;
+
+						page.drawText(text, {
+							x, y: imgHeight - y - size, size, font,
+							color: PDFLib.rgb(1, 1, 1),
+							opacity: 0,
+						});
+					} catch (e) {
+						console.warn(`Skipping text that can't be encoded: "${text}"`, e);
+						continue;
+					}
 				}
 			}
 		}
+
+		setStatus('Converting to PDF...', metadata.pages);
+		await sleep(10);
+
+		const fname = await getFname(tabs[0]);
+		const pdfBytes = await pdf.save();
+		const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+		const pdfURL = URL.createObjectURL(pdfBlob);
+		await browser.downloads.download({ url: pdfURL, filename: fname.endsWith('.pdf') ? fname : `${fname}.pdf` });
+		URL.revokeObjectURL(pdfURL);
 	}
-
-	setStatus('Converting to PDF...', metadata.pages);
-	await sleep(10);
-
-	const fname = await getFname(tabs[0]);
-	const pdfBytes = await pdf.save();
-	const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-	const pdfURL = URL.createObjectURL(pdfBlob);
-	await browser.downloads.download({ url: pdfURL, filename: fname.endsWith('.pdf') ? fname : `${fname}.pdf` });
-	URL.revokeObjectURL(pdfURL);
-
-	setVisible(statusContainer, false);
-	setVisible(successContainer, true);
+	catch (error) {
+		document.body.className = 'error';
+		errorContainer.innerText = 'An error occurred while downloading the document.';
+		console.error(error);
+	}
 });

@@ -1,23 +1,10 @@
 <html>
 	<head>
 		<style>
-			body {
-				font-family: system-ui, -apple-system;
-				width: 200px;
-				padding: 20px;
-			}
-			body > * {
-				display: none;
-			}
-
-			progress {
-				width: 100%;
-			}
-
 			button {
 				display: block;
 				color: #fff;
-				background-color: #007bff;
+				background-color: #07f;
 				padding: 10px 20px;
 				border: none;
 				border-radius: 5px;
@@ -32,6 +19,38 @@
 				cursor: not-allowed;
 			}
 
+			body {
+				font-family: system-ui, -apple-system;
+				width: 200px;
+				padding: 20px;
+			}
+			body > * {
+				display: none;
+			}
+			body.unsupported #unsupported-container {
+				display: block;
+			}
+			body.error #error-container {
+				display: block;
+			}
+			body.ready #download-button {
+				display: block;
+			}
+			body.downloading #status-container {
+				display: block;
+			}
+			body.success #success-container {
+				display: block;
+			}
+
+			progress {
+				width: 100%;
+			}
+
+			#error-container {
+				color: #d23;
+			}
+
 			@media (prefers-color-scheme: dark) {
 				body {
 					background-color: #212121;
@@ -42,9 +61,11 @@
 	</head>
 
 	<body>
-		<h1 id='error-container'>This page is not a Google Drive document</h1>
+		<div id='unsupported-container'>This page is not a Google Drive document</div>
+		
+		<div id='error-container'></div>
 
-		<button>Download <span id='fname'></span></button>
+		<button id='download-button'>Download <span id='fname'></span></button>
 
 		<div id='status-container'>
 			<progress id='progress-bar' max='1'></progress>

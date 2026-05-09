@@ -84,15 +84,10 @@ async function refreshViewID(docID) {
 		let viewID;
 		for (let i = 0; i < 40; i++) {
 			viewID = (await browser.storage.session.get(docID))[docID];
-			if (viewID != oldID) break;
+			if (viewID != oldID) return viewID;
 			await sleep(250);
 		}
-
-		if (!viewID || viewID === oldID) {
-			throw new Error('Failed to refresh viewID for this document.');
-		}
-
-		return viewID;
+		throw new Error('Failed to refresh viewID for this document.');
 	} finally {
 		browser.tabs.remove(backgroundTab.id);
 	}
@@ -134,6 +129,67 @@ function collectWordLeaves(node, leaves = []) {
 	return leaves;
 }
 
+async function getPage(viewID, authuser, page, maxPageWidth, docID) {
+	const params = new URLSearchParams({
+		id: viewID,
+		authuser,
+		page,
+		webp: false,
+		w: maxPageWidth,
+	});
+
+	const pressPage = await getJSON('presspage', params, docID);
+	const imgReq = await fetchWithRetry(`https://drive.google.com/viewerng/img?${params.toString()}`);
+	const imgBytes = await imgReq.arrayBuffer();
+
+	return { pressPage, imgBytes };
+}
+
+async function addPageToPdf(pdf, font, assets) {
+	const [_, pageWidth, pageHeight, boxes] = assets.pressPage;
+	const img = await pdf.embedPng(assets.imgBytes);
+
+	const ratio = pageWidth / pageHeight;
+	const imgWidth = maxSideLength * Math.min(1, ratio);
+	const imgHeight = maxSideLength / Math.max(1, ratio);
+	const scale = imgWidth / pageWidth;
+
+	const page = pdf.addPage([imgWidth, imgHeight]);
+	page.drawImage(img, {
+		x: 0,
+		y: 0,
+		width: imgWidth,
+		height: imgHeight,
+	});
+
+	if (boxes) {
+		const wordLeaves = collectWordLeaves(boxes).sort((left, right) => {
+			const [leftY, leftX] = left[0];
+			const [rightY, rightX] = right[0];
+			return leftY - rightY || leftX - rightX;
+		});
+
+		for (const [box, text] of wordLeaves) {
+			const [y, x, h, w] = box.map(value => value * scale);
+
+			let size = h / font.heightAtSize(h);
+			try {
+				const textWidth = font.widthOfTextAtSize(text, size);
+				size *= w / textWidth;
+
+				page.drawText(text, {
+					x, y: imgHeight - y - size, size, font,
+					color: PDFLib.rgb(1, 1, 1),
+					opacity: 0,
+				});
+			} catch (e) {
+				console.warn(`Skipping text that can't be encoded: "${text}"`, e);
+				continue;
+			}
+		}
+	}
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
 	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
 	const url = tabs[0].url;
@@ -168,63 +224,17 @@ downloadButton.addEventListener('click', async () => {
 		}), docID);
 		progressBar.max = metadata.pages + 1;
 
+		let nextPagePromise = getPage(viewID, authuser, 0, metadata.maxPageWidth, docID);
 		for (let i = 0; i < metadata.pages; i++) {
 			setStatus(`Downloading page ${i + 1} of ${metadata.pages}...`, i + 1);
 
-			const params = new URLSearchParams({
-				id: viewID,
-				authuser,
-				page: i,
-				webp: false,
-				w: metadata.maxPageWidth,
-			});
-
-			const pressPage = await getJSON('presspage', params, docID);
-			const [_, pageWidth, pageHeight, boxes] = pressPage;
-
-			const imgReq = await fetchWithRetry(`https://drive.google.com/viewerng/img?${params.toString()}`);
-			const imgBytes = await imgReq.arrayBuffer();
-			const img = await pdf.embedPng(imgBytes);
-
-			const ratio = pageWidth / pageHeight;
-			const imgWidth = maxSideLength * Math.min(1, ratio);
-			const imgHeight = maxSideLength / Math.max(1, ratio);
-			const scale = imgWidth / pageWidth;
-
-			const page = pdf.addPage([imgWidth, imgHeight]);
-			page.drawImage(img, {
-				x: 0,
-				y: 0,
-				width: imgWidth,
-				height: imgHeight,
-			});
-
-			if (boxes) {
-				const wordLeaves = collectWordLeaves(boxes).sort((left, right) => {
-					const [leftY, leftX] = left[0];
-					const [rightY, rightX] = right[0];
-					return leftY - rightY || leftX - rightX;
-				});
-
-				for (const [box, text] of wordLeaves) {
-					const [y, x, h, w] = box.map(value => value * scale);
-
-					let size = h / font.heightAtSize(h);
-					try {
-						const textWidth = font.widthOfTextAtSize(text, size);
-						size *= w / textWidth;
-
-						page.drawText(text, {
-							x, y: imgHeight - y - size, size, font,
-							color: PDFLib.rgb(1, 1, 1),
-							opacity: 0,
-						});
-					} catch (e) {
-						console.warn(`Skipping text that can't be encoded: "${text}"`, e);
-						continue;
-					}
-				}
+			const currentPagePromise = nextPagePromise;
+			if (i != metadata.pages - 1) {
+				nextPagePromise = getPage(viewID, authuser, i + 1, metadata.maxPageWidth, docID);
 			}
+
+			const assets = await currentPagePromise;
+			await addPageToPdf(pdf, font, assets);
 		}
 
 		setStatus('Converting to PDF...', metadata.pages);

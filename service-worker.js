@@ -14,4 +14,4 @@ browser.webRequest.onBeforeRequest.addListener(async e => {
 	if (viewID !== prevID) {
 		await browser.storage.session.set({ [docID]: viewID });
 	}
-}, { urls: ['https://drive.google.com/viewerng/*'] });
+}, { urls: ['https://drive.google.com/viewer/img*'] });

@@ -6,17 +6,24 @@ const errorContainer = document.querySelector('#error-container');
 const downloadButton = document.querySelector('button');
 const downloadFname = document.querySelector('#fname');
 
-const gettingDataContainer = document.querySelector('#getting-data-container');
-const progressContainer = document.querySelector('#progress-container');
-const progressBar = document.querySelector('progress');
-const progressCurrent = document.querySelector('#current-page');
-const progressTotal = document.querySelector('#total-pages');
+const statusContainer = document.querySelector('#status-container');
+const progressBar = document.querySelector('#progress-bar');
+const statusText = document.querySelector('#status-text');
 
-const convertingContainer = document.querySelector('#converting-container');
 const successContainer = document.querySelector('#success-container');
 
 async function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function setVisible(element, isVisible) {
+	element.style.display = isVisible ? 'block' : 'none';
+}
+
+function setStatus(text, value) {
+	setVisible(statusContainer, true);
+	statusText.innerText = text;
+	progressBar.value = value;
 }
 
 async function fetchWithRetry(url, options = {}, attempts = 3, delayMs = 250) {
@@ -77,17 +84,22 @@ async function refreshViewID(docID) {
 		active: false,
 		url: `https://drive.google.com/file/d/${docID}/edit`,
 	});
-	let viewID;
-	for (let i = 0; i < 40; i++) {
-		viewID = (await browser.storage.session.get(docID))[docID];
-		if (viewID != oldID) break;
-		await sleep(250);
+	try {
+		let viewID;
+		for (let i = 0; i < 40; i++) {
+			viewID = (await browser.storage.session.get(docID))[docID];
+			if (viewID != oldID) break;
+			await sleep(250);
+		}
+
+		if (!viewID) {
+			throw new Error('Failed to refresh viewID for this document.');
+		}
+
+		return viewID;
+	} finally {
+		browser.tabs.remove(backgroundTab.id);
 	}
-	if (!viewID) {
-		throw new Error('Failed to refresh viewID for this document.');
-	}
-	browser.tabs.remove(backgroundTab.id);
-	return viewID;
 }
 
 async function getJSON(endpoint, params, docID) {
@@ -138,8 +150,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 downloadButton.addEventListener('click', async () => {
-	downloadButton.style.display = 'none';
-	gettingDataContainer.style.display = 'block';
+	setVisible(downloadButton, false);
+	setStatus('Getting document data...', 0);
 
 	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
 	const url = new URL(tabs[0].url);
@@ -147,7 +159,7 @@ downloadButton.addEventListener('click', async () => {
 	const authuser = url.searchParams.get('authuser') || '0';
 
 	let viewID = (await browser.storage.session.get(docID))[docID];
-	if (!viewID) await refreshViewID(docID);
+	if (!viewID) viewID = await refreshViewID(docID);
 
 	const pdf = await PDFLib.PDFDocument.create();
 	const font = await pdf.embedFont(PDFLib.StandardFonts.Helvetica);
@@ -156,15 +168,10 @@ downloadButton.addEventListener('click', async () => {
 		id: viewID,
 		authuser,
 	}), docID);
-	progressBar.max = metadata.pages;
-	progressTotal.innerText = metadata.pages;
-
-	gettingDataContainer.style.display = 'none';
-	progressContainer.style.display = 'block';
+	progressBar.max = metadata.pages + 1;
 
 	for (let i = 0; i < metadata.pages; i++) {
-		progressBar.value = i;
-		progressCurrent.innerText = i + 1;
+		setStatus(`Downloading page ${i + 1} of ${metadata.pages}`, i + 1);
 
 		const params = new URLSearchParams({
 			id: viewID,
@@ -177,7 +184,6 @@ downloadButton.addEventListener('click', async () => {
 		const pressPage = await getJSON('presspage', params, docID);
 		const [_, pageWidth, pageHeight, boxes] = pressPage;
 
-
 		const imgReq = await fetchWithRetry(`https://drive.google.com/viewerng/img?${params.toString()}`);
 		const imgBytes = await imgReq.arrayBuffer();
 		const img = await pdf.embedPng(imgBytes);
@@ -187,7 +193,7 @@ downloadButton.addEventListener('click', async () => {
 		const imgHeight = maxSideLength / Math.max(1, ratio);
 		const scale = imgWidth / pageWidth;
 
-		const page = pdf.addPage([imgWidth, imgHeight])
+		const page = pdf.addPage([imgWidth, imgHeight]);
 		page.drawImage(img, {
 			x: 0,
 			y: 0,
@@ -223,9 +229,8 @@ downloadButton.addEventListener('click', async () => {
 		}
 	}
 
-	progressContainer.style.display = 'none';
-	convertingContainer.style.display = 'block';
-	await sleep(0);
+	setStatus('Converting to PDF...', metadata.pages);
+	await sleep(10);
 
 	const fname = await getFname(tabs[0]);
 	const pdfBytes = await pdf.save();
@@ -234,6 +239,6 @@ downloadButton.addEventListener('click', async () => {
 	await browser.downloads.download({ url: pdfURL, filename: fname.endsWith('.pdf') ? fname : `${fname}.pdf` });
 	URL.revokeObjectURL(pdfURL);
 
-	convertingContainer.style.display = 'none';
-	successContainer.style.display = 'block';
+	setVisible(statusContainer, false);
+	setVisible(successContainer, true);
 });

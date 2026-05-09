@@ -46,17 +46,9 @@
 
 		<button>Download <span id='fname'></span></button>
 
-		<div id='getting-data-container'>
-			<p>Getting document data...</p>
-		</div>
-
-		<div id='progress-container'>
-			<progress></progress>
-			<p>Downloading page <span id='current-page'></span> of <span id='total-pages'></span></p>
-		</div>
-
-		<div id='converting-container'>
-			<p>Converting to PDF...</p>
+		<div id='status-container'>
+			<progress id='progress-bar' max='1'></progress>
+			<p id='status-text'>Getting document data...</p>
 		</div>
 
 		<div id='success-container'>
